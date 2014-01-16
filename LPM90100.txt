@@ -1,0 +1,150 @@
+## If you wish to use this code commercially, please email me for a license 
+## License:  Attribution-NonCommercial-ShareAlike 3.0 United States
+#
+## Written by Bruce Schaller 15JAN2014
+## bruce.schaller-@-gmail.com (remove dashes)
+#
+## version 0.1
+## Texas Instruments - LMP90100 SPI Communications in Python
+#
+## This device supports SPI streams. i.e. a number of bytes can be written while the chip select is held high.
+## These are examples of how to perform functions like configuration of the ADC.
+## This code is not tested, and is not intended for use in any commerci
+#
+## Goal: Interface a Beaglebone Black (or any linux system with an SPI master) to the Texas Instruments LPM90100 
+## to take accurate temperature measurements using a RTD (resistance temperature device) or TC (thermocouple).  
+## Create a library of code to permit copy-paste programming for basic functionality.
+
+
+import spidev
+import time
+
+	#----------------------------
+
+	#OPEN the SPI on the device
+
+	spi = spidev.SpiDev() 	#Create SPI Object
+	spi.open(X, Y) 		#open SPI port X, device (CS) Y (SPECIFIC TO THE SYSTEM TO WHICH DEVICE IS CONNECTED)
+
+	#----------------------------
+
+#------------------------------------------------------------------------------------------
+#---------------- Set the basic configuration parameters of the ADC. ----------------------
+
+	#Transaction 1 - URA Setup, Write @ Upper address byte 0x00
+
+resp = spi.xfer2([0x10],[0x00]) 	#[0x10] write address, [0x00] Upper address byte
+
+	#Transaction 2 - Data Access, Write out configuration for 0x00 to 0x0F.
+
+					#NOTES	ADDRESS		FUNCTION	
+resp1 = spi.xfer2([0x03],[0x60], 	#--- 			Write Data, Streaming, starting at 0x00
+	[0x00], 			#--- 	[0x00] 		Register and conversion reset; change to 0xc3 for register and conversion reset.
+	[0x00], 			#--- 	[0x01] 		See Table 28 of data sheet
+	[0x00], 			#--- 	[0x02] 		See Table 29 of data sheet, bit 7=0 Normal streaming Mode. bit 7=1 Controlled streaming mode. [6:0] - Selects range for controlled streaming.
+	[0x00], [0x00], [0x00], [0x00], #--- 	[0x03-0x06] 	reserved.  do not change.
+	[0x00], 			#--- 	[0x07] 		Sets the mode to active mode. Alternatively, 0x01 = power down mode, 0x03 = standby mode.
+	[0x1a], 			#--- 	[0x08] 		Sets data read only mode start address to 0x1a (this is smart, that's where the data is.)
+	[0x02], 			#--- 	[0x09] 		Sets the number of bytes to read out in data only mode.  0x00 = read 1 byte...0x07 = read 8 bytes.  Set to grab 3 bytes currently.
+	[0x00], 			#--- 	[0x0a]		0x00 - Don't restart conversion.;  0x01 - Restart Conversion
+	[0x00], [0x00], 		#--- 	[0x0b]		Reserved.  Do Not Change.
+	[0x00],  			#--- 	[0x0c]		GPIO Direction Control. 0x00, all GPIO pins are inputs.  Binary Structure [0 D6output? D5output? D4output? D3output? D2output? D1output? D0output?]
+	[0x00],  			#--- 	[0x0d]		GPIO Data.  This sets (write) or reads (reads) the condition of the GPIO pin.
+	[0x00],				#--- 	[0x10]		Turns off background calibration.  See pg 58 of Data sheet.
+	[0x00],				#--- 	[0x11]		See page 61 on the data sheet.
+	[0x00],				#--- 	[0x12]		See page 55 of data sheet.  Last 3 bits are used for setting RTD current.
+	[0x00],				#--- 	[0x13]		Cyclic redundancy check options.  See Pages 61, 41 of data sheet.  First get the system working, then figure out cyclic redundancy.
+	[0x00],[0x00],			#---	[0x14-0x15]	Sensor diagnostic threshold.  See page 34-35, 59-60 in the data sheet.
+	[0x00],				#---	[0x16]		Reserved.  Do not change.
+	[0x00])				#---	[0x17]		Scalcn: system calibration control.  Bits 7-2 reserved.  Bits 1&0 -> 00: normal mode, 01: System calibration offset coefficient determination mode, 10: System calibration gain coefficient determination, 11: System calibration gain coefficient determination mode.  
+
+	#End of Transaction 2
+
+# Transaction 2 note:  The example in the data sheet shows that it is acceptable to use a single 
+# call to make all of these writes, even across the UAB edge where a second call would logically 
+# be required.	See example on page 45.
+
+#----------------- END Setting the configuration parameters of the ADC.--------------------
+#------------------------------------------------------------------------------------------
+
+
+
+#------------------------------------------------------------------------------------------
+#----------CRC Reset Code:  Use this section of code to reset the CRC Data. ---------------
+
+	#Transaction 3, URA setup, WRITE @ upper address byte 0x01.
+
+resp2 = spi.xfer2([0x10],[0x01])	#[0x10] write address, [0x01] upper byte address. WRITE IS A SINGLE BYTE. See data sheet, pg 36.
+	
+	#Transaction 4 - Data Access, Write Out Configuration
+
+					#NOTES	ADDRESS		FUNCTION
+resp3 = spi.xfer2([0x0d],[0x00])	#---	[0x1d]		Write any value to reset the CRC.  Use the whole snipped to ensure that the write starts at the correct location.	
+
+#------------------------- End CRC Reset Code Snippet. ------------------------------------
+#------------------------------------------------------------------------------------------
+
+
+
+#------------------------------------------------------------------------------------------
+#------------------------- Read the Channel Status Byte -----------------------------------
+
+
+	#Transaction 1 - Set the upper register address.
+
+resp4 = spi.xfer2([0x90],[0x01])	#[0x10] read address, [0x01] upper byte address. See data sheet, pg 36.
+
+	#Transaction 2 - Read the Channel Status Byte
+
+resp5 = spi.xfer2([0x8e])		#Binary equivalent to: 1 -> (read operation) 00 -> (one byte) 0 -> (always 0) 1110 -> (E)
+
+
+#------------------------- End Read Channel Status Byte -----------------------------------
+#------------------------------------------------------------------------------------------
+
+
+#------------------------------------------------------------------------------------------
+#------------------------- Write the Channel Scan Mode Byte -------------------------------
+
+
+	#Transaction 1 - Set the upper register address.
+
+resp6 = spi.xfer2([0x10],[0x01])	#[0x10] read address, [0x01] upper byte address. See data sheet, pg 36.
+
+	#Transaction 2 - Write the Channel Scan Mode Byte
+
+resp7 = spi.xfer2([0x0f],[0xf8])		
+	#Binary equivalent to:  0 -> (write operation) 00 -> (one byte) 0 -> (always 0) 1111 -> (f)
+	# 0xf8 Binary Equivalent to: 111 (Scan Mode 3) 110 (Last Channel is 6) 00 (First Channel is 0)
+
+
+#------------------------- End Write Channel Scan Mode Byte -------------------------------
+#------------------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------------------
+#------------------------- Read the Channel Scan Mode Byte --------------------------------
+
+
+	#Transaction 1 - Set the upper register address.
+
+resp8 = spi.xfer2([0x90],[0x01])	#[0x10] read address, [0x01] upper byte address. See data sheet, pg 36.
+
+	#Transaction 2 - Read the Channel Status Byte
+
+resp9 = spi.xfer2([0x8f])		#Binary equivalent to: 1 -> (read operation) 00 -> (one byte) 0 -> (always 0) 1111 -> (F)
+
+
+#------------------------- End Read Channel Scan Mode Byte --------------------------------
+#------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
